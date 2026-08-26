@@ -1,29 +1,224 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
-export default function PlayWaitingPage() {
+type Room = {
+  id: string;
+  status: 'lobby' | 'question' | 'reveal' | 'ended';
+  current_question_index: number;
+};
+
+type Question = {
+  id: string;
+  order_index: number;
+  body: string;
+  choices: string[];
+  correct_index: number;
+  time_limit_sec: number;
+};
+
+type PlayerInfo = {
+  playerId: string;
+};
+
+export default function PlayGamePage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
 
-  const [nickname, setNickname] = useState<string | null>(null);
+  const [room, setRoom] = useState<Room | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [playerInfo, setPlayerInfo] = useState<PlayerInfo | null>(null);
 
+  // このブラウザでの「回答済みかどうか」「選んだ選択肢」を持つローカル状態
+  const [hasAnswered, setHasAnswered] = useState(false);
+  const [selectedChoice, setSelectedChoice] = useState<number | null>(null);
+  const [isLocked, setIsLocked] = useState(false); // 制限時間が来たらtrueにする
+  const [remainingMs, setRemainingMs] = useState(0);
+
+  // タイマーの起点となる時刻(この問題を最初に表示した瞬間)を保持する
+  // useRefを使うのは「再レンダリングされても値を保持し続けたい」かつ「値が変わっても再描画は不要」なため
+  const timerStartRef = useRef<number | null>(null);
+  const questionIdRef = useRef<string | null>(null);
+
+  const currentQuestion = useMemo(() => {
+    if (!room) return null;
+    return questions.find((q) => q.order_index === room.current_question_index) ?? null;
+  }, [room, questions]);
+
+  // 1. localStorageから自分のplayerIdを読み出す
   useEffect(() => {
-    // joinページでlocalStorageに保存した情報を読み出す
     const saved = localStorage.getItem(`kahoot_player_${roomId}`);
     if (saved) {
-      // 今はニックネームは保存していないので、ここでは参加できたことだけ確認する
-      setNickname('参加登録済み');
+      const parsed = JSON.parse(saved);
+      setPlayerInfo({ playerId: parsed.playerId });
     }
   }, [roomId]);
 
+  // 2. 初期データ取得
+  useEffect(() => {
+    async function fetchInitialData() {
+      const { data: roomData } = await supabase
+        .from('rooms')
+        .select('id, status, current_question_index, quiz_id')
+        .eq('id', roomId)
+        .single();
+      if (!roomData) return;
+      setRoom(roomData);
+
+      const { data: questionsData } = await supabase
+        .from('questions')
+        .select('id, order_index, body, choices, correct_index, time_limit_sec')
+        .eq('quiz_id', roomData.quiz_id)
+        .order('order_index');
+      if (questionsData) setQuestions(questionsData);
+    }
+    fetchInitialData();
+  }, [roomId]);
+
+  // 3. ルーム状態のRealtime購読(ホストが出題状態を進めたら反映する)
+  useEffect(() => {
+    const channel = supabase
+      .channel(`room:${roomId}:player`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
+        (payload) => setRoom(payload.new as Room)
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId]);
+
+  // 4. 新しい問題になったら、回答状態とタイマーをリセットする
+  useEffect(() => {
+    if (!currentQuestion) return;
+    if (questionIdRef.current === currentQuestion.id) return; // 同じ問題なら何もしない
+
+    questionIdRef.current = currentQuestion.id;
+    timerStartRef.current = performance.now(); // ← このタイミングが「自分が問題を表示した瞬間」
+    setHasAnswered(false);
+    setSelectedChoice(null);
+    setIsLocked(false);
+    setRemainingMs(currentQuestion.time_limit_sec * 1000);
+  }, [currentQuestion]);
+
+  // 5. カウントダウン表示 + 制限時間到達で自動ロック
+  //    setIntervalの回数を積算せず、開始時刻との差分で毎回計算し直す
+  //    (バックグラウンドタブでのスロットリング対策)
+  useEffect(() => {
+    if (!currentQuestion || room?.status !== 'question' || hasAnswered) return;
+
+    const timeLimitMs = currentQuestion.time_limit_sec * 1000;
+
+    const intervalId = setInterval(() => {
+      if (timerStartRef.current === null) return;
+      const elapsed = performance.now() - timerStartRef.current;
+      const remaining = Math.max(timeLimitMs - elapsed, 0);
+      setRemainingMs(remaining);
+
+      if (remaining <= 0) {
+        setIsLocked(true);
+        clearInterval(intervalId);
+      }
+    }, 200);
+
+    return () => clearInterval(intervalId);
+  }, [currentQuestion, room?.status, hasAnswered]);
+
+  async function handleAnswer(choiceIndex: number) {
+    if (hasAnswered || isLocked || !currentQuestion || !playerInfo) return;
+
+    // 経過時間はクライアント側の計測値をそのまま送る(設計方針:クライアント時刻基準)
+    const elapsedMs = timerStartRef.current
+      ? Math.round(performance.now() - timerStartRef.current)
+      : currentQuestion.time_limit_sec * 1000;
+
+    setSelectedChoice(choiceIndex);
+    setHasAnswered(true); // 連打防止のため先にロックしてから送信する
+
+    const { error } = await supabase.from('answers').insert({
+      room_id: roomId,
+      player_id: playerInfo.playerId,
+      question_id: currentQuestion.id,
+      choice_index: choiceIndex,
+      client_time_taken_ms: elapsedMs,
+    });
+
+    if (error) {
+      console.error('回答の送信に失敗しました', error);
+    }
+  }
+
+  if (!room || !playerInfo) {
+    return <main className="p-8">読み込み中...</main>;
+  }
+
+  if (room.status === 'lobby') {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+        <h1 className="text-2xl font-bold">参加しました!</h1>
+        <p className="text-gray-600">ホストが開始するまでお待ちください</p>
+      </main>
+    );
+  }
+
+  if (room.status === 'ended') {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+        <h1 className="text-2xl font-bold">クイズ終了!</h1>
+        <p className="text-gray-600">お疲れさまでした</p>
+      </main>
+    );
+  }
+
+  if (!currentQuestion) {
+    return <main className="p-8">問題を読み込み中...</main>;
+  }
+
+  // 出題中(question)の画面
+  if (room.status === 'question') {
+    return (
+      <main className="flex min-h-screen flex-col items-center gap-6 p-8">
+        <p className="text-2xl font-mono font-bold">
+          残り {Math.ceil(remainingMs / 1000)}秒
+        </p>
+        <h1 className="max-w-xl text-center text-2xl font-bold">{currentQuestion.body}</h1>
+
+        <div className="grid w-full max-w-xl grid-cols-2 gap-4">
+          {currentQuestion.choices.map((choice, i) => (
+            <button
+              key={i}
+              onClick={() => handleAnswer(i)}
+              disabled={hasAnswered || isLocked}
+              className={`rounded-lg p-6 text-lg font-semibold text-white transition
+                ${selectedChoice === i ? 'bg-indigo-800' : 'bg-indigo-500 hover:bg-indigo-600'}
+                disabled:opacity-50`}
+            >
+              {choice}
+            </button>
+          ))}
+        </div>
+
+        {hasAnswered && <p className="text-gray-600">回答を送信しました。結果をお待ちください</p>}
+        {!hasAnswered && isLocked && <p className="text-red-600">時間切れです</p>}
+      </main>
+    );
+  }
+
+  // 結果発表(reveal)の画面
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
-      <h1 className="text-2xl font-bold">参加しました!</h1>
-      <p className="text-gray-600">
-        {nickname ? 'ホストが開始するまでお待ちください' : '参加情報が見つかりませんでした'}
-      </p>
+      <h1 className="text-2xl font-bold">結果発表</h1>
+      <p className="text-xl">正解: {currentQuestion.choices[currentQuestion.correct_index]}</p>
+      {selectedChoice !== null && (
+        <p className={selectedChoice === currentQuestion.correct_index ? 'text-green-600' : 'text-red-600'}>
+          あなたの回答: {currentQuestion.choices[selectedChoice]}
+          {selectedChoice === currentQuestion.correct_index ? '(正解!)' : '(不正解)'}
+        </p>
+      )}
     </main>
   );
 }
