@@ -37,8 +37,9 @@ export default function PlayGamePage() {
   const [isLocked, setIsLocked] = useState(false); // 制限時間が来たらtrueにする
   const [remainingMs, setRemainingMs] = useState(0);
 
-  // タイマーの起点となる時刻(この問題を最初に表示した瞬間)を保持する
-  // useRefを使うのは「再レンダリングされても値を保持し続けたい」かつ「値が変わっても再描画は不要」なため
+  // タイマーの起点となる時刻(ミリ秒のUNIXタイムスタンプ)を保持する
+  // performance.now()ではなくDate.now()を使うのは、
+  // ページをリロードしてもDBに保存した時刻と同じ基準で計算し直せるようにするため
   const timerStartRef = useRef<number | null>(null);
   const questionIdRef = useRef<string | null>(null);
 
@@ -92,18 +93,49 @@ export default function PlayGamePage() {
     };
   }, [roomId]);
 
-  // 4. 新しい問題になったら、回答状態とタイマーをリセットする
+  // 4. 新しい問題になったら、DB上のタイマー開始時刻を確認して復元 or 新規記録する
   useEffect(() => {
-    if (!currentQuestion) return;
+    if (!currentQuestion || !playerInfo) return;
     if (questionIdRef.current === currentQuestion.id) return; // 同じ問題なら何もしない
 
     questionIdRef.current = currentQuestion.id;
-    timerStartRef.current = performance.now(); // ← このタイミングが「自分が問題を表示した瞬間」
     setHasAnswered(false);
     setSelectedChoice(null);
     setIsLocked(false);
-    setRemainingMs(currentQuestion.time_limit_sec * 1000);
-  }, [currentQuestion]);
+
+    async function setupTimer() {
+      // 自分の現在のタイマー開始時刻をDBから取得する
+      const { data: playerRow } = await supabase
+        .from('players')
+        .select('current_question_timer_started_at')
+        .eq('id', playerInfo!.playerId)
+        .single();
+
+      const existingStartedAt = playerRow?.current_question_timer_started_at as string | null | undefined;
+
+      if (existingStartedAt) {
+        // すでに開始時刻が記録済み = リロード/再接続。そこからの経過分を引き継ぐ
+        timerStartRef.current = new Date(existingStartedAt).getTime();
+      } else {
+        // 初めてこの問題を表示した = 今の時刻を開始時刻として記録する
+        const now = new Date();
+        timerStartRef.current = now.getTime();
+        await supabase
+          .from('players')
+          .update({ current_question_timer_started_at: now.toISOString() })
+          .eq('id', playerInfo!.playerId);
+      }
+
+      // 開始時刻が確定したので、残り時間を計算して即座に反映する
+      const timeLimitMs = currentQuestion!.time_limit_sec * 1000;
+      const elapsed = Date.now() - timerStartRef.current;
+      const remaining = Math.max(timeLimitMs - elapsed, 0);
+      setRemainingMs(remaining);
+      if (remaining <= 0) setIsLocked(true);
+    }
+
+    setupTimer();
+  }, [currentQuestion, playerInfo]);
 
   // 5. カウントダウン表示 + 制限時間到達で自動ロック
   //    setIntervalの回数を積算せず、開始時刻との差分で毎回計算し直す
@@ -115,7 +147,7 @@ export default function PlayGamePage() {
 
     const intervalId = setInterval(() => {
       if (timerStartRef.current === null) return;
-      const elapsed = performance.now() - timerStartRef.current;
+      const elapsed = Date.now() - timerStartRef.current;
       const remaining = Math.max(timeLimitMs - elapsed, 0);
       setRemainingMs(remaining);
 
@@ -133,7 +165,7 @@ export default function PlayGamePage() {
 
     // 経過時間はクライアント側の計測値をそのまま送る(設計方針:クライアント時刻基準)
     const elapsedMs = timerStartRef.current
-      ? Math.round(performance.now() - timerStartRef.current)
+      ? Math.round(Date.now() - timerStartRef.current)
       : currentQuestion.time_limit_sec * 1000;
 
     setSelectedChoice(choiceIndex);

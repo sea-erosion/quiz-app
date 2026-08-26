@@ -135,6 +135,9 @@ export default function HostLobbyPage() {
 
   // 出題開始・進行の操作
   async function startFirstQuestion() {
+    // 全参加者のタイマー開始時刻をリセットしておく(前回の値が残らないように)
+    await supabase.from('players').update({ current_question_timer_started_at: null }).eq('room_id', roomId);
+
     const { data } = await supabase
       .from('rooms')
       .update({ status: 'question', current_question_index: 0, question_started_at: new Date().toISOString() })
@@ -158,6 +161,11 @@ export default function HostLobbyPage() {
     if (!room) return;
     const nextIndex = room.current_question_index + 1;
     const isLast = nextIndex >= questions.length;
+
+    if (!isLast) {
+      // 次の問題に進む前に、全参加者のタイマー開始時刻をリセットする
+      await supabase.from('players').update({ current_question_timer_started_at: null }).eq('room_id', roomId);
+    }
 
     const { data } = await supabase
       .from('rooms')
