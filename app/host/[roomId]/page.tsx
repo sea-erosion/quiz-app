@@ -91,6 +91,14 @@ export default function HostLobbyPage() {
         .eq('room_id', roomId);
 
       if (playersData) setPlayers(playersData);
+
+      // これまでに届いている回答も取得する(リロード時に集計がゼロに戻らないようにするため)
+      const { data: answersData } = await supabase
+        .from('answers')
+        .select('id, player_id, question_id, choice_index')
+        .eq('room_id', roomId);
+
+      if (answersData) setAnswers(answersData);
     }
 
     fetchInitialData();
