@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { sampleQuiz } from '@/lib/sampleQuiz';
 import { generatePin } from '@/lib/pin';
+import { shuffleArray } from '@/lib/shuffle';
 
 export default function HostTopPage() {
   const router = useRouter();
@@ -24,6 +25,7 @@ export default function HostTopPage() {
           author_name: sampleQuiz.authorName,
           description: sampleQuiz.description,
           shuffle: sampleQuiz.shuffle,
+          question_limit: sampleQuiz.questionLimit,
         })
         .select()
         .single();
@@ -32,8 +34,13 @@ export default function HostTopPage() {
         throw quizError ?? new Error('クイズの作成に失敗しました');
       }
 
-      // 2. 質問(questions)をまとめて登録する
-      const questionsToInsert = sampleQuiz.questions.map((q, index) => ({
+      // 2. 問題プール(20問)からランダムに question_limit(10問)だけ選んで登録する
+      const selectedQuestions = shuffleArray(sampleQuiz.questions).slice(
+        0,
+        sampleQuiz.questionLimit
+      );
+
+      const questionsToInsert = selectedQuestions.map((q, index) => ({
         quiz_id: quiz.id,
         order_index: index,
         body: q.body,
