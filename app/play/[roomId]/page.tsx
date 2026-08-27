@@ -131,6 +131,23 @@ export default function PlayGamePage() {
     setIsLocked(false);
 
     async function setupTimer() {
+      // すでにこの問題に回答済みかどうかを確認する(リロード時に再回答できてしまうのを防ぐ)
+      const { data: existingAnswer } = await supabase
+        .from('answers')
+        .select('choice_index')
+        .eq('player_id', playerInfo!.playerId)
+        .eq('question_id', currentQuestion!.id)
+        .maybeSingle();
+
+      if (existingAnswer) {
+        // 回答済みだった場合は、その内容を復元してロック状態にする
+        setSelectedChoice(existingAnswer.choice_index);
+        setHasAnswered(true);
+        setIsLocked(true);
+        setRemainingMs(0);
+        return; // タイマーの計算はもう不要なのでここで終了
+      }
+
       // 自分の現在のタイマー開始時刻をDBから取得する
       const { data: playerRow } = await supabase
         .from('players')
