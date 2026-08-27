@@ -10,6 +10,7 @@ type Room = {
   status: 'lobby' | 'question' | 'reveal' | 'ended';
   current_question_index: number;
   quiz_id: string;
+  question_started_at: string | null;
 };
 
 type Question = {
@@ -70,7 +71,7 @@ export default function HostLobbyPage() {
     async function fetchInitialData() {
       const { data: roomData } = await supabase
         .from('rooms')
-        .select('id, pin, status, current_question_index, quiz_id')
+        .select('id, pin, status, current_question_index, quiz_id, question_started_at')
         .eq('id', roomId)
         .single();
 
@@ -132,6 +133,25 @@ export default function HostLobbyPage() {
       supabase.removeChannel(channel);
     };
   }, [roomId]);
+
+  // 出題中は、制限時間 + バッファ秒数が過ぎたら自動的に結果発表へ進める
+  // バッファを挟むのは、参加者側の受信タイミングがネットワーク状況で
+  // 少しずつ遅れる可能性があるため、締め切りを急ぎすぎないようにする猶予
+  useEffect(() => {
+    if (room?.status !== 'question' || !currentQuestion || !room.question_started_at) return;
+
+    const bufferMs = 3000;
+    const deadlineMs = currentQuestion.time_limit_sec * 1000 + bufferMs;
+    const elapsed = Date.now() - new Date(room.question_started_at).getTime();
+    const delay = Math.max(deadlineMs - elapsed, 0);
+
+    const timeoutId = setTimeout(() => {
+      revealAnswer();
+    }, delay);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.status, room?.question_started_at, currentQuestion]);
 
   // 出題開始・進行の操作
   async function startFirstQuestion() {

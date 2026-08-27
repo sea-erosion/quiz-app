@@ -140,8 +140,9 @@ export default function PlayGamePage() {
   // 5. カウントダウン表示 + 制限時間到達で自動ロック
   //    setIntervalの回数を積算せず、開始時刻との差分で毎回計算し直す
   //    (バックグラウンドタブでのスロットリング対策)
+  //    回答済みでもカウントダウン自体は止めない(全員に「あと何秒か」を見せ続けるため)
   useEffect(() => {
-    if (!currentQuestion || room?.status !== 'question' || hasAnswered) return;
+    if (!currentQuestion || room?.status !== 'question') return;
 
     const timeLimitMs = currentQuestion.time_limit_sec * 1000;
 
@@ -158,7 +159,7 @@ export default function PlayGamePage() {
     }, 200);
 
     return () => clearInterval(intervalId);
-  }, [currentQuestion, room?.status, hasAnswered]);
+  }, [currentQuestion, room?.status]);
 
   async function handleAnswer(choiceIndex: number) {
     if (hasAnswered || isLocked || !currentQuestion || !playerInfo) return;
