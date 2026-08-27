@@ -23,6 +23,12 @@ type PlayerInfo = {
   playerId: string;
 };
 
+type Player = {
+  id: string;
+  nickname: string;
+  score: number;
+};
+
 export default function PlayGamePage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
@@ -30,6 +36,7 @@ export default function PlayGamePage() {
   const [room, setRoom] = useState<Room | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [playerInfo, setPlayerInfo] = useState<PlayerInfo | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]); // 全員のランキング表示用
 
   // このブラウザでの「回答済みかどうか」「選んだ選択肢」を持つローカル状態
   const [hasAnswered, setHasAnswered] = useState(false);
@@ -74,11 +81,18 @@ export default function PlayGamePage() {
         .eq('quiz_id', roomData.quiz_id)
         .order('order_index');
       if (questionsData) setQuestions(questionsData);
+
+      // ランキング表示用に、参加者全員のスコアも取得しておく
+      const { data: playersData } = await supabase
+        .from('players')
+        .select('id, nickname, score')
+        .eq('room_id', roomId);
+      if (playersData) setPlayers(playersData);
     }
     fetchInitialData();
   }, [roomId]);
 
-  // 3. ルーム状態のRealtime購読(ホストが出題状態を進めたら反映する)
+  // 3. ルーム状態・参加者スコアのRealtime購読
   useEffect(() => {
     const channel = supabase
       .channel(`room:${roomId}:player`)
@@ -86,6 +100,19 @@ export default function PlayGamePage() {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
         (payload) => setRoom(payload.new as Room)
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}` },
+        (payload) => setPlayers((prev) => [...prev, payload.new as Player])
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}` },
+        (payload) => {
+          const updated = payload.new as Player;
+          setPlayers((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        }
       )
       .subscribe();
     return () => {
@@ -199,10 +226,24 @@ export default function PlayGamePage() {
   }
 
   if (room.status === 'ended') {
+    const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+      <main className="flex min-h-screen flex-col items-center gap-6 p-8">
         <h1 className="text-2xl font-bold">クイズ終了!</h1>
         <p className="text-gray-600">お疲れさまでした</p>
+        <ul className="w-full max-w-md space-y-2">
+          {sortedPlayers.map((p, i) => (
+            <li
+              key={p.id}
+              className={`flex justify-between rounded-lg px-4 py-2 ${
+                p.id === playerInfo.playerId ? 'bg-yellow-200 font-bold' : 'bg-gray-100'
+              }`}
+            >
+              <span>{i + 1}位 {p.nickname}{p.id === playerInfo.playerId ? '(あなた)' : ''}</span>
+              <span>{p.score}点</span>
+            </li>
+          ))}
+        </ul>
       </main>
     );
   }
@@ -242,16 +283,36 @@ export default function PlayGamePage() {
   }
 
   // 結果発表(reveal)の画面
+  const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+    <main className="flex min-h-screen flex-col items-center gap-6 p-8">
       <h1 className="text-2xl font-bold">結果発表</h1>
       <p className="text-xl">正解: {currentQuestion.choices[currentQuestion.correct_index]}</p>
-      {selectedChoice !== null && (
+      {selectedChoice !== null ? (
         <p className={selectedChoice === currentQuestion.correct_index ? 'text-green-600' : 'text-red-600'}>
           あなたの回答: {currentQuestion.choices[selectedChoice]}
           {selectedChoice === currentQuestion.correct_index ? '(正解!)' : '(不正解)'}
         </p>
+      ) : (
+        <p className="text-gray-500">未回答でした</p>
       )}
+
+      <div className="w-full max-w-md">
+        <p className="mb-2 text-gray-600">現在のランキング</p>
+        <ul className="space-y-2">
+          {sortedPlayers.map((p, i) => (
+            <li
+              key={p.id}
+              className={`flex justify-between rounded-lg px-4 py-2 ${
+                p.id === playerInfo.playerId ? 'bg-yellow-200 font-bold' : 'bg-gray-100'
+              }`}
+            >
+              <span>{i + 1}. {p.nickname}{p.id === playerInfo.playerId ? '(あなた)' : ''}</span>
+              <span>{p.score}点</span>
+            </li>
+          ))}
+        </ul>
+      </div>
     </main>
   );
 }
