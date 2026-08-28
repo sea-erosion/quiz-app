@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase';
 type Room = {
   id: string;
   pin: string;
-  status: 'lobby' | 'question' | 'reveal' | 'ended';
+  status: 'lobby' | 'preview' | 'question' | 'reveal' | 'ended';
   current_question_index: number;
   quiz_id: string;
   question_started_at: string | null;
@@ -153,14 +153,33 @@ export default function HostLobbyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.status, room?.question_started_at, currentQuestion]);
 
+  // preview(次の問題の予告)状態になったら、一定時間後に自動でquestionへ進める
+  const PREVIEW_DURATION_MS = 4000;
+  useEffect(() => {
+    if (room?.status !== 'preview' || !currentQuestion) return;
+
+    const timeoutId = setTimeout(async () => {
+      const { data } = await supabase
+        .from('rooms')
+        .update({ status: 'question', question_started_at: new Date().toISOString() })
+        .eq('id', roomId)
+        .select()
+        .single();
+      if (data) setRoom(data);
+    }, PREVIEW_DURATION_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [room?.status, currentQuestion, roomId]);
+
   // 出題開始・進行の操作
   async function startFirstQuestion() {
     // 全参加者のタイマー開始時刻をリセットしておく(前回の値が残らないように)
     await supabase.from('players').update({ current_question_timer_started_at: null }).eq('room_id', roomId);
 
+    // いきなり出題するのではなく、まず「次の問題は何点か」の予告(preview)を挟む
     const { data } = await supabase
       .from('rooms')
-      .update({ status: 'question', current_question_index: 0, question_started_at: new Date().toISOString() })
+      .update({ status: 'preview', current_question_index: 0, question_started_at: null })
       .eq('id', roomId)
       .select()
       .single();
@@ -193,9 +212,9 @@ export default function HostLobbyPage() {
         isLast
           ? { status: 'ended' }
           : {
-              status: 'question',
+              status: 'preview',
               current_question_index: nextIndex,
-              question_started_at: new Date().toISOString(),
+              question_started_at: null,
             }
       )
       .eq('id', roomId)
@@ -234,6 +253,17 @@ export default function HostLobbyPage() {
           >
             開始する
           </button>
+        </>
+      )}
+
+      {room.status === 'preview' && currentQuestion && (
+        <>
+          <p className="text-gray-500">
+            問題 {room.current_question_index + 1} / {questions.length}
+          </p>
+          <h1 className="text-2xl font-bold">次の問題は…</h1>
+          <p className="text-7xl font-bold text-indigo-600">{currentQuestion.points}点</p>
+          <p className="text-gray-500">まもなく出題します</p>
         </>
       )}
 

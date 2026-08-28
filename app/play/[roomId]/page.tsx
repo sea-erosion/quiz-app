@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 
 type Room = {
   id: string;
-  status: 'lobby' | 'question' | 'reveal' | 'ended';
+  status: 'lobby' | 'preview' | 'question' | 'reveal' | 'ended';
   current_question_index: number;
 };
 
@@ -17,6 +17,7 @@ type Question = {
   choices: string[];
   correct_index: number;
   time_limit_sec: number;
+  points: number;
 };
 
 type PlayerInfo = {
@@ -82,7 +83,7 @@ export default function PlayGamePage() {
 
       const { data: questionsData } = await supabase
         .from('questions')
-        .select('id, order_index, body, choices, correct_index, time_limit_sec')
+        .select('id, order_index, body, choices, correct_index, time_limit_sec, points')
         .eq('quiz_id', roomData.quiz_id)
         .order('order_index');
       if (questionsData) setQuestions(questionsData);
@@ -125,9 +126,10 @@ export default function PlayGamePage() {
     };
   }, [roomId]);
 
-  // 4. 新しい問題になったら、DB上のタイマー開始時刻を確認して復元 or 新規記録する
+  // 4. 新しい問題(question状態になった瞬間)に、DB上のタイマー開始時刻を確認して復元 or 新規記録する
+  //    previewの間はまだタイマーを動かしたくないので、status==='question'になってから実行する
   useEffect(() => {
-    if (!currentQuestion || !playerInfo) return;
+    if (!currentQuestion || !playerInfo || room?.status !== 'question') return;
     if (questionIdRef.current === currentQuestion.id) return; // 同じ問題なら何もしない
 
     questionIdRef.current = currentQuestion.id;
@@ -199,7 +201,7 @@ export default function PlayGamePage() {
     return () => {
       cancelled = true;
     };
-  }, [currentQuestion, playerInfo]);
+  }, [currentQuestion, playerInfo, room?.status]);
 
   // 5. カウントダウン表示 + 制限時間到達で自動ロック
   //    setIntervalの回数を積算せず、開始時刻との差分で毎回計算し直す
@@ -287,6 +289,17 @@ export default function PlayGamePage() {
 
   if (!currentQuestion) {
     return <main className="p-8">問題を読み込み中...</main>;
+  }
+
+  // 予告(preview)画面:次の問題が何点かだけを見せる
+  if (room.status === 'preview') {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+        <h1 className="text-2xl font-bold">次の問題は…</h1>
+        <p className="text-7xl font-bold text-indigo-600">{currentQuestion.points}点</p>
+        <p className="text-gray-500">まもなく出題されます</p>
+      </main>
+    );
   }
 
   // 出題中(question)の画面
