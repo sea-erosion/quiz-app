@@ -44,10 +44,14 @@ export default function PlayGamePage() {
   const [isLocked, setIsLocked] = useState(false); // 制限時間が来たらtrueにする
   const [remainingMs, setRemainingMs] = useState(0);
 
-  // タイマーの起点となる時刻(ミリ秒のUNIXタイムスタンプ)を保持する
+  // タイマーの起点となる時刻(ミリ秒のUNIXタイムスタンプ)。
   // performance.now()ではなくDate.now()を使うのは、
-  // ページをリロードしてもDBに保存した時刻と同じ基準で計算し直せるようにするため
-  const timerStartRef = useRef<number | null>(null);
+  // ページをリロードしてもDBに保存した時刻と同じ基準で計算し直せるようにするため。
+  // ★refではなくstateにしているのが今回のポイント:
+  //   「DBへの問い合わせが終わって正しい基準時刻が確定するまではnullのまま」にすることで、
+  //   カウントダウン処理(下のeffect)が前の問題の古い基準時刻を使って
+  //   一瞬だけ誤った残り時間を計算してしまう問題を防ぐ。
+  const [timerStartMs, setTimerStartMs] = useState<number | null>(null);
   const questionIdRef = useRef<string | null>(null);
 
   const currentQuestion = useMemo(() => {
@@ -129,6 +133,10 @@ export default function PlayGamePage() {
     setHasAnswered(false);
     setSelectedChoice(null);
     setIsLocked(false);
+    setRemainingMs(currentQuestion.time_limit_sec * 1000);
+    // 基準時刻が確定するまでnullに戻す。
+    // これによりeffect5(カウントダウン)は基準時刻が決まるまで一時停止する。
+    setTimerStartMs(null);
 
     async function setupTimer() {
       // すでにこの問題に回答済みかどうかを確認する(リロード時に再回答できてしまうのを防ぐ)
@@ -157,22 +165,25 @@ export default function PlayGamePage() {
 
       const existingStartedAt = playerRow?.current_question_timer_started_at as string | null | undefined;
 
+      let startMs: number;
       if (existingStartedAt) {
         // すでに開始時刻が記録済み = リロード/再接続。そこからの経過分を引き継ぐ
-        timerStartRef.current = new Date(existingStartedAt).getTime();
+        startMs = new Date(existingStartedAt).getTime();
       } else {
         // 初めてこの問題を表示した = 今の時刻を開始時刻として記録する
         const now = new Date();
-        timerStartRef.current = now.getTime();
+        startMs = now.getTime();
         await supabase
           .from('players')
           .update({ current_question_timer_started_at: now.toISOString() })
           .eq('id', playerInfo!.playerId);
       }
 
-      // 開始時刻が確定したので、残り時間を計算して即座に反映する
+      // 基準時刻が確定したので、これで初めてカウントダウンを動かし始める
+      setTimerStartMs(startMs);
+
       const timeLimitMs = currentQuestion!.time_limit_sec * 1000;
-      const elapsed = Date.now() - timerStartRef.current;
+      const elapsed = Date.now() - startMs;
       const remaining = Math.max(timeLimitMs - elapsed, 0);
       setRemainingMs(remaining);
       if (remaining <= 0) setIsLocked(true);
@@ -185,14 +196,14 @@ export default function PlayGamePage() {
   //    setIntervalの回数を積算せず、開始時刻との差分で毎回計算し直す
   //    (バックグラウンドタブでのスロットリング対策)
   //    回答済みでもカウントダウン自体は止めない(全員に「あと何秒か」を見せ続けるため)
+  //    timerStartMsがnullの間(=基準時刻がまだ確定していない間)は動かさない
   useEffect(() => {
-    if (!currentQuestion || room?.status !== 'question') return;
+    if (!currentQuestion || room?.status !== 'question' || timerStartMs === null) return;
 
     const timeLimitMs = currentQuestion.time_limit_sec * 1000;
 
     const intervalId = setInterval(() => {
-      if (timerStartRef.current === null) return;
-      const elapsed = Date.now() - timerStartRef.current;
+      const elapsed = Date.now() - timerStartMs;
       const remaining = Math.max(timeLimitMs - elapsed, 0);
       setRemainingMs(remaining);
 
@@ -203,14 +214,14 @@ export default function PlayGamePage() {
     }, 200);
 
     return () => clearInterval(intervalId);
-  }, [currentQuestion, room?.status]);
+  }, [currentQuestion, room?.status, timerStartMs]);
 
   async function handleAnswer(choiceIndex: number) {
     if (hasAnswered || isLocked || !currentQuestion || !playerInfo) return;
 
     // 経過時間はクライアント側の計測値をそのまま送る(設計方針:クライアント時刻基準)
-    const elapsedMs = timerStartRef.current
-      ? Math.round(Date.now() - timerStartRef.current)
+    const elapsedMs = timerStartMs
+      ? Math.round(Date.now() - timerStartMs)
       : currentQuestion.time_limit_sec * 1000;
 
     setSelectedChoice(choiceIndex);
