@@ -27,6 +27,7 @@ type Player = {
   id: string;
   nickname: string;
   score: number;
+  correct_streak: number;
 };
 
 export default function PlayGamePage() {
@@ -89,7 +90,7 @@ export default function PlayGamePage() {
       // ランキング表示用に、参加者全員のスコアも取得しておく
       const { data: playersData } = await supabase
         .from('players')
-        .select('id, nickname, score')
+        .select('id, nickname, score, correct_streak')
         .eq('room_id', roomId);
       if (playersData) setPlayers(playersData);
     }
@@ -320,15 +321,23 @@ export default function PlayGamePage() {
 
   // 結果発表(reveal)の画面
   const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
+  const myPlayer = players.find((p) => p.id === playerInfo.playerId);
   return (
     <main className="flex min-h-screen flex-col items-center gap-6 p-8">
       <h1 className="text-2xl font-bold">結果発表</h1>
       <p className="text-xl">正解: {currentQuestion.choices[currentQuestion.correct_index]}</p>
       {selectedChoice !== null ? (
-        <p className={selectedChoice === currentQuestion.correct_index ? 'text-green-600' : 'text-red-600'}>
-          あなたの回答: {currentQuestion.choices[selectedChoice]}
-          {selectedChoice === currentQuestion.correct_index ? '(正解!)' : '(不正解)'}
-        </p>
+        <div className="text-center">
+          <p className={selectedChoice === currentQuestion.correct_index ? 'text-green-600' : 'text-red-600'}>
+            あなたの回答: {currentQuestion.choices[selectedChoice]}
+            {selectedChoice === currentQuestion.correct_index ? '(正解!)' : '(不正解)'}
+          </p>
+          {myPlayer && myPlayer.correct_streak >= 2 && (
+            <p className="mt-1 font-bold text-orange-500">
+              🔥 {myPlayer.correct_streak}連続正解中!
+            </p>
+          )}
+        </div>
       ) : (
         <p className="text-gray-500">未回答でした</p>
       )}
