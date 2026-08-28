@@ -134,12 +134,14 @@ export default function PlayGamePage() {
     setSelectedChoice(null);
     setIsLocked(false);
     setRemainingMs(currentQuestion.time_limit_sec * 1000);
-    // 基準時刻が確定するまでnullに戻す。
-    // これによりeffect5(カウントダウン)は基準時刻が決まるまで一時停止する。
     setTimerStartMs(null);
 
+    // このeffectが「もう古くなった(別の問題に切り替わった)」かどうかを判定するフラグ。
+    // 通信の遅延で古い問題の非同期処理が後から完了し、
+    // 新しい問題の画面に誤って反映されてしまう(状態の競合)のを防ぐために使う。
+    let cancelled = false;
+
     async function setupTimer() {
-      // すでにこの問題に回答済みかどうかを確認する(リロード時に再回答できてしまうのを防ぐ)
       const { data: existingAnswer } = await supabase
         .from('answers')
         .select('choice_index')
@@ -147,30 +149,30 @@ export default function PlayGamePage() {
         .eq('question_id', currentQuestion!.id)
         .maybeSingle();
 
+      if (cancelled) return; // すでに次の問題に切り替わっていたら、ここで処理を打ち切る
+
       if (existingAnswer) {
-        // 回答済みだった場合は、その内容を復元してロック状態にする
         setSelectedChoice(existingAnswer.choice_index);
         setHasAnswered(true);
         setIsLocked(true);
         setRemainingMs(0);
-        return; // タイマーの計算はもう不要なのでここで終了
+        return;
       }
 
-      // 自分の現在のタイマー開始時刻をDBから取得する
       const { data: playerRow } = await supabase
         .from('players')
         .select('current_question_timer_started_at')
         .eq('id', playerInfo!.playerId)
         .single();
 
+      if (cancelled) return; // ここでも念のため確認する
+
       const existingStartedAt = playerRow?.current_question_timer_started_at as string | null | undefined;
 
       let startMs: number;
       if (existingStartedAt) {
-        // すでに開始時刻が記録済み = リロード/再接続。そこからの経過分を引き継ぐ
         startMs = new Date(existingStartedAt).getTime();
       } else {
-        // 初めてこの問題を表示した = 今の時刻を開始時刻として記録する
         const now = new Date();
         startMs = now.getTime();
         await supabase
@@ -179,7 +181,8 @@ export default function PlayGamePage() {
           .eq('id', playerInfo!.playerId);
       }
 
-      // 基準時刻が確定したので、これで初めてカウントダウンを動かし始める
+      if (cancelled) return; // 更新完了を待っている間に切り替わっていたら反映しない
+
       setTimerStartMs(startMs);
 
       const timeLimitMs = currentQuestion!.time_limit_sec * 1000;
@@ -190,6 +193,11 @@ export default function PlayGamePage() {
     }
 
     setupTimer();
+
+    // 問題が切り替わる・画面を離れる際に呼ばれる後片付け処理
+    return () => {
+      cancelled = true;
+    };
   }, [currentQuestion, playerInfo]);
 
   // 5. カウントダウン表示 + 制限時間到達で自動ロック
