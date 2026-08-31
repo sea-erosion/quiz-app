@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { revealTextGradually } from '@/lib/revealTextGradually';
 
 type Room = {
   id: string;
@@ -54,7 +55,14 @@ export default function PlayGamePage() {
   //   カウントダウン処理(下のeffect)が前の問題の古い基準時刻を使って
   //   一瞬だけ誤った残り時間を計算してしまう問題を防ぐ。
   const [timerStartMs, setTimerStartMs] = useState<number | null>(null);
+
+  // 出題演出用:何文字目まで表示済みか、選択肢をフェードインさせるかどうか
+  const [revealedCount, setRevealedCount] = useState(0);
+  const [showChoices, setShowChoices] = useState(false);
   const questionIdRef = useRef<string | null>(null);
+
+  // 早押し用:trueにすると、実行中の文字送り演出をその場で打ち切る
+  const skipRevealRef = useRef(false);
 
   const currentQuestion = useMemo(() => {
     if (!room) return null;
@@ -138,6 +146,9 @@ export default function PlayGamePage() {
     setIsLocked(false);
     setRemainingMs(currentQuestion.time_limit_sec * 1000);
     setTimerStartMs(null);
+    setRevealedCount(0);
+    setShowChoices(false);
+    skipRevealRef.current = false; // 早押しフラグも新しい問題ごとにリセットする
 
     // このeffectが「もう古くなった(別の問題に切り替わった)」かどうかを判定するフラグ。
     // 通信の遅延で古い問題の非同期処理が後から完了し、
@@ -155,6 +166,9 @@ export default function PlayGamePage() {
       if (cancelled) return; // すでに次の問題に切り替わっていたら、ここで処理を打ち切る
 
       if (existingAnswer) {
+        // 回答済み(=リロードで戻ってきた)場合は演出を飛ばしてすぐ全部見せる
+        setRevealedCount(currentQuestion!.body.length);
+        setShowChoices(true);
         setSelectedChoice(existingAnswer.choice_index);
         setHasAnswered(true);
         setIsLocked(true);
@@ -172,27 +186,53 @@ export default function PlayGamePage() {
 
       const existingStartedAt = playerRow?.current_question_timer_started_at as string | null | undefined;
 
-      let startMs: number;
       if (existingStartedAt) {
-        startMs = new Date(existingStartedAt).getTime();
-      } else {
-        const now = new Date();
-        startMs = now.getTime();
-        await supabase
-          .from('players')
-          .update({ current_question_timer_started_at: now.toISOString() })
-          .eq('id', playerInfo!.playerId);
+        // リロード・再接続の場合:演出は飛ばして即フル表示し、残り時間を計算して再開する
+        setRevealedCount(currentQuestion!.body.length);
+        setShowChoices(true);
+
+        const startMs = new Date(existingStartedAt).getTime();
+        setTimerStartMs(startMs);
+
+        const timeLimitMs = currentQuestion!.time_limit_sec * 1000;
+        const elapsed = Date.now() - startMs;
+        const remaining = Math.max(timeLimitMs - elapsed, 0);
+        setRemainingMs(remaining);
+        if (remaining <= 0) setIsLocked(true);
+        return;
       }
+
+      // 初めての表示:1文字ずつ表示する演出を行い、演出が終わってから初めてタイマーを開始する
+      // ただし早押しでタップされた場合(skipRevealRef)は、その場で演出を打ち切る
+      await revealTextGradually(
+        currentQuestion!.body.length,
+        125,
+        () => cancelled || skipRevealRef.current,
+        (count) => setRevealedCount(count)
+      );
+
+      if (cancelled) return; // 問題自体が切り替わっていたら、ここで打ち切る(早押しでの打ち切りとは区別する)
+
+      // 早押しで途中打ち切りした場合、表示済み文字数が中途半端なままなので、
+      // 選択肢を出す前に問題文を最後まで表示しきっておく
+      if (skipRevealRef.current) {
+        setRevealedCount(currentQuestion!.body.length);
+      }
+
+      // 演出が終わった瞬間(または早押しでタップされた瞬間)に選択肢をフェードインさせ、同時にタイマーを開始する
+      setShowChoices(true);
+
+      const now = new Date();
+      const startMs = now.getTime();
+      await supabase
+        .from('players')
+        .update({ current_question_timer_started_at: now.toISOString() })
+        .eq('id', playerInfo!.playerId);
 
       if (cancelled) return; // 更新完了を待っている間に切り替わっていたら反映しない
 
       setTimerStartMs(startMs);
-
-      const timeLimitMs = currentQuestion!.time_limit_sec * 1000;
-      const elapsed = Date.now() - startMs;
-      const remaining = Math.max(timeLimitMs - elapsed, 0);
-      setRemainingMs(remaining);
-      if (remaining <= 0) setIsLocked(true);
+      setRemainingMs(currentQuestion!.time_limit_sec * 1000); // 演出後に開始するので満タンから始まる
     }
 
     setupTimer();
@@ -227,8 +267,14 @@ export default function PlayGamePage() {
     return () => clearInterval(intervalId);
   }, [currentQuestion, room?.status, timerStartMs]);
 
+  // 出題演出の途中で画面をタップした時に呼ばれる(早押し)
+  function handleSkipReveal() {
+    if (showChoices || hasAnswered) return; // すでに選択肢が出ていたら何もしない
+    skipRevealRef.current = true;
+  }
+
   async function handleAnswer(choiceIndex: number) {
-    if (hasAnswered || isLocked || !currentQuestion || !playerInfo) return;
+    if (hasAnswered || isLocked || !currentQuestion || !playerInfo || !showChoices) return;
 
     // 経過時間はクライアント側の計測値をそのまま送る(設計方針:クライアント時刻基準)
     const elapsedMs = timerStartMs
@@ -305,18 +351,38 @@ export default function PlayGamePage() {
   // 出題中(question)の画面
   if (room.status === 'question') {
     return (
-      <main className="flex min-h-screen flex-col items-center gap-6 p-8">
+      <main
+        onClick={handleSkipReveal}
+        className="flex min-h-screen flex-col items-center gap-6 p-8"
+      >
         <p className="text-2xl font-mono font-bold">
           残り {Math.ceil(remainingMs / 1000)}秒
         </p>
-        <h1 className="max-w-xl text-center text-2xl font-bold">{currentQuestion.body}</h1>
+        {/* 1文字ずつ表示する演出。まだ表示していない部分は透明な文字で場所だけ確保しておき、
+            表示が進むにつれてレイアウトがガタつかないようにする */}
+        <h1 className="max-w-xl text-center text-2xl font-bold">
+          <span>{currentQuestion.body.slice(0, revealedCount)}</span>
+          <span className="text-transparent">{currentQuestion.body.slice(revealedCount)}</span>
+        </h1>
 
-        <div className="grid w-full max-w-xl grid-cols-2 gap-4">
+        {!showChoices && !hasAnswered && (
+          <p className="animate-pulse text-sm text-indigo-500">
+            画面をタップすると早く選択肢を表示できます
+          </p>
+        )}
+
+        <div
+          className={`grid w-full max-w-xl grid-cols-2 gap-4 transition-opacity duration-500
+            ${showChoices ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+        >
           {currentQuestion.choices.map((choice, i) => (
             <button
               key={i}
-              onClick={() => handleAnswer(i)}
-              disabled={hasAnswered || isLocked}
+              onClick={(e) => {
+                e.stopPropagation(); // 選択肢のクリックがmainのタップ判定(早押し)に伝わらないようにする
+                handleAnswer(i);
+              }}
+              disabled={hasAnswered || isLocked || !showChoices}
               className={`rounded-lg p-6 text-lg font-semibold text-white transition
                 ${selectedChoice === i ? 'bg-indigo-800' : 'bg-indigo-500 hover:bg-indigo-600'}
                 disabled:opacity-50`}

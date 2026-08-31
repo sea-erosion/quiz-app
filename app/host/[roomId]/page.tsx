@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { revealTextGradually } from '@/lib/revealTextGradually';
 
 type Room = {
   id: string;
@@ -44,6 +45,7 @@ export default function HostLobbyPage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
+  const [hostRevealedCount, setHostRevealedCount] = useState(0); // ホスト画面の演出用(表示のみ、タイマーには影響しない)
 
   const currentQuestion = useMemo(() => {
     if (!room) return null;
@@ -171,6 +173,22 @@ export default function HostLobbyPage() {
     return () => clearTimeout(timeoutId);
   }, [room?.status, currentQuestion, roomId]);
 
+  // ホスト画面の問題文も、参加者側と同じく1文字ずつ表示する演出をつける(見た目だけの演出)
+  useEffect(() => {
+    if (room?.status !== 'question' || !currentQuestion) {
+      setHostRevealedCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    setHostRevealedCount(0);
+    revealTextGradually(currentQuestion.body.length, 125, () => cancelled, setHostRevealedCount);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [room?.status, currentQuestion]);
+
   // 出題開始・進行の操作
   async function startFirstQuestion() {
     // 全参加者のタイマー開始時刻をリセットしておく(前回の値が残らないように)
@@ -272,7 +290,10 @@ export default function HostLobbyPage() {
           <p className="text-gray-500">
             問題 {room.current_question_index + 1} / {questions.length}
           </p>
-          <h1 className="max-w-2xl text-center text-3xl font-bold">{currentQuestion.body}</h1>
+          <h1 className="max-w-2xl text-center text-3xl font-bold">
+            <span>{currentQuestion.body.slice(0, hostRevealedCount)}</span>
+            <span className="text-transparent">{currentQuestion.body.slice(hostRevealedCount)}</span>
+          </h1>
           <ul className="grid w-full max-w-2xl grid-cols-2 gap-4">
             {currentQuestion.choices.map((choice, i) => (
               <li key={i} className="rounded-lg bg-indigo-100 p-4 text-center text-lg">
