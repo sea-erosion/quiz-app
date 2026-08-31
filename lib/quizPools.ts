@@ -8,6 +8,7 @@ export type QuizPool = {
   title: string;
   authorName: string;
   description: string;
+  isTutorial?: boolean; // trueの場合、ホスト側で出題数選択を1問固定にし、各画面に説明を表示する
   questions: {
     body: string;
     choices: string[];
@@ -16,6 +17,26 @@ export type QuizPool = {
     points: number;
   }[];
 };
+
+// チュートリアルモード用の1問だけのプール。
+// ゲームの流れ(予告→出題→結果発表→終了)を実際に体験しながら理解してもらうためのもの。
+export const tutorialPool: QuizPool = {
+  id: 'tutorial',
+  title: 'チュートリアル(ゲームの流れを説明)',
+  authorName: '開発用',
+  description: '1問だけの練習用。画面の流れを説明しながら進みます',
+  isTutorial: true,
+  questions: [
+    {
+      body: 'これはチュートリアル問題です。「クイズ」を選んでください',
+      choices: ['クイズ', 'アンケート', '宿題', '面接'],
+      correctIndex: 0,
+      timeLimitSec: 20,
+      points: 1000,
+    },
+  ],
+};
+ 
 
 export const quizPools: QuizPool[] = [
   {

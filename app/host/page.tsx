@@ -3,29 +3,36 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { quizPools } from '@/lib/quizPools';
+import { quizPools, tutorialPool } from '@/lib/quizPools';
 import { generatePin } from '@/lib/pin';
 import { shuffleArray } from '@/lib/shuffle';
+
+// 選択肢一覧:チュートリアルを先頭に、その後に通常の問題プールを並べる
+const selectablePools = [tutorialPool, ...quizPools];
 
 export default function HostTopPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // 選択中の問題プール(デフォルトは最初のプール)
+  // 選択中の問題プール(デフォルトは通常プールの最初のもの)
   const [selectedPoolId, setSelectedPoolId] = useState(quizPools[0].id);
-  const selectedPool = quizPools.find((p) => p.id === selectedPoolId) ?? quizPools[0];
+  const selectedPool = selectablePools.find((p) => p.id === selectedPoolId) ?? quizPools[0];
 
   // 出題数(選んだプールの問題数を超えないように、初期値はプールの問題数と10の小さい方)
   const [questionCount, setQuestionCount] = useState(
     Math.min(10, quizPools[0].questions.length)
   );
 
-  // プールを切り替えたときに、出題数がそのプールの問題数を超えていたら自動的に調整する
+  // プールを切り替えたときに、出題数がそのプールの問題数を超えていたら自動的に調整する。
+  // チュートリアルは常に1問固定にする。
   function handlePoolChange(poolId: string) {
     setSelectedPoolId(poolId);
-    const pool = quizPools.find((p) => p.id === poolId);
-    if (pool && questionCount > pool.questions.length) {
+    const pool = selectablePools.find((p) => p.id === poolId);
+    if (!pool) return;
+    if (pool.isTutorial) {
+      setQuestionCount(1);
+    } else if (questionCount > pool.questions.length) {
       setQuestionCount(pool.questions.length);
     }
   }
@@ -82,6 +89,7 @@ export default function HostTopPage() {
           quiz_id: quiz.id,
           mode: 'individual',
           status: 'lobby',
+          is_tutorial: selectedPool.isTutorial ?? false,
         })
         .select()
         .single();
@@ -109,11 +117,12 @@ export default function HostTopPage() {
         <div>
           <label className="mb-2 block font-medium text-gray-700">出題する問題ファイル</label>
           <div className="space-y-2">
-            {quizPools.map((pool) => (
+            {selectablePools.map((pool) => (
               <label
                 key={pool.id}
                 className={`block cursor-pointer rounded-lg border p-3 transition
-                  ${selectedPoolId === pool.id ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'}`}
+                  ${selectedPoolId === pool.id ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'}
+                  ${pool.isTutorial ? 'border-dashed' : ''}`}
               >
                 <input
                   type="radio"
@@ -123,32 +132,38 @@ export default function HostTopPage() {
                   onChange={() => handlePoolChange(pool.id)}
                   className="mr-2"
                 />
-                <span className="font-semibold">{pool.title}</span>
+                <span className="font-semibold">
+                  {pool.isTutorial && '🔰 '}
+                  {pool.title}
+                </span>
                 <p className="ml-6 text-sm text-gray-500">
-                  {pool.description}(プール内:{pool.questions.length}問)
+                  {pool.description}
+                  {!pool.isTutorial && `(プール内:${pool.questions.length}問)`}
                 </p>
               </label>
             ))}
           </div>
         </div>
 
-        {/* 出題数の指定 */}
-        <div>
-          <label className="mb-2 block font-medium text-gray-700">
-            出題数:{questionCount}問
-          </label>
-          <input
-            type="range"
-            min={1}
-            max={selectedPool.questions.length}
-            value={questionCount}
-            onChange={(e) => setQuestionCount(Number(e.target.value))}
-            className="w-full"
-          />
-          <p className="text-sm text-gray-500">
-            このプール(全{selectedPool.questions.length}問)からランダムに{questionCount}問を出題します
-          </p>
-        </div>
+        {/* 出題数の指定(チュートリアルの場合は1問固定なので表示しない) */}
+        {!selectedPool.isTutorial && (
+          <div>
+            <label className="mb-2 block font-medium text-gray-700">
+              出題数:{questionCount}問
+            </label>
+            <input
+              type="range"
+              min={1}
+              max={selectedPool.questions.length}
+              value={questionCount}
+              onChange={(e) => setQuestionCount(Number(e.target.value))}
+              className="w-full"
+            />
+            <p className="text-sm text-gray-500">
+              このプール(全{selectedPool.questions.length}問)からランダムに{questionCount}問を出題します
+            </p>
+          </div>
+        )}
       </div>
 
       <button

@@ -12,6 +12,7 @@ type Room = {
   current_question_index: number;
   quiz_id: string;
   question_started_at: string | null;
+  is_tutorial: boolean;
 };
 
 type Question = {
@@ -73,7 +74,7 @@ export default function HostLobbyPage() {
     async function fetchInitialData() {
       const { data: roomData } = await supabase
         .from('rooms')
-        .select('id, pin, status, current_question_index, quiz_id, question_started_at')
+        .select('id, pin, status, current_question_index, quiz_id, question_started_at, is_tutorial')
         .eq('id', roomId)
         .single();
 
@@ -278,6 +279,11 @@ export default function HostLobbyPage() {
     <main className="flex min-h-screen flex-col items-center gap-8 p-8">
       {room.status === 'lobby' && (
         <>
+          {room.is_tutorial && (
+            <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+              🔰 ここは「ロビー画面」です。参加者にPINを伝えて、スマホから参加してもらいましょう。参加者が集まったら「開始する」を押します。
+            </p>
+          )}
           <h1 className="text-2xl font-bold">参加者を待っています</h1>
           <div className="rounded-xl bg-indigo-50 px-10 py-6 text-center">
             <p className="text-sm text-gray-500">合言葉(PIN)</p>
@@ -305,6 +311,11 @@ export default function HostLobbyPage() {
 
       {room.status === 'preview' && currentQuestion && (
         <>
+          {room.is_tutorial && (
+            <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+              🔰 ここは「予告画面」です。次の問題が何点かだけを先に見せて、期待感を持たせる演出です。数秒後、自動的に出題に切り替わります。
+            </p>
+          )}
           <p className="text-gray-500">
             問題 {room.current_question_index + 1} / {questions.length}
           </p>
@@ -316,6 +327,11 @@ export default function HostLobbyPage() {
 
       {room.status === 'question' && currentQuestion && (
         <>
+          {room.is_tutorial && (
+            <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+              🔰 ここは「出題画面」です。参加者のスマホにも同じ問題と選択肢が表示され、各自のタイマーで回答します。ここでは回答状況をリアルタイムで見守ります。
+            </p>
+          )}
           <p className="text-gray-500">
             問題 {room.current_question_index + 1} / {questions.length}
           </p>
@@ -345,6 +361,11 @@ export default function HostLobbyPage() {
 
       {room.status === 'reveal' && currentQuestion && (
         <>
+          {room.is_tutorial && (
+            <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+              🔰 ここは「結果発表画面」です。正解と、現在のランキングが表示されます。5秒後、自動的に次の問題(または最終結果)へ進みます。
+            </p>
+          )}
           <h1 className="text-2xl font-bold">正解発表</h1>
           <p className="text-xl">
             正解: {currentQuestion.choices[currentQuestion.correct_index]}
@@ -370,6 +391,11 @@ export default function HostLobbyPage() {
 
       {room.status === 'ended' && (
         <>
+          {room.is_tutorial && (
+            <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+              🔰 これで一連の流れは以上です。「ルームを作る」画面に戻って、実際の問題ファイルでゲームを始めてみましょう!
+            </p>
+          )}
           <h1 className="text-3xl font-bold">最終結果</h1>
           <ul className="w-full max-w-md space-y-2">
             {[...players]

@@ -9,6 +9,7 @@ type Room = {
   id: string;
   status: 'lobby' | 'preview' | 'question' | 'reveal' | 'ended';
   current_question_index: number;
+  is_tutorial: boolean;
 };
 
 type Question = {
@@ -99,7 +100,7 @@ export default function PlayGamePage() {
     async function fetchInitialData() {
       const { data: roomData } = await supabase
         .from('rooms')
-        .select('id, status, current_question_index, quiz_id')
+        .select('id, status, current_question_index, quiz_id, is_tutorial')
         .eq('id', roomId)
         .single();
       if (!roomData) return;
@@ -336,6 +337,11 @@ export default function PlayGamePage() {
   if (room.status === 'lobby') {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+        {room.is_tutorial && (
+          <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+            🔰 参加できました。ここは「待機画面」です。ホストが開始するまでこのままお待ちください。
+          </p>
+        )}
         <h1 className="text-2xl font-bold">参加しました!</h1>
         <p className="text-gray-600">ホストが開始するまでお待ちください</p>
       </main>
@@ -346,6 +352,11 @@ export default function PlayGamePage() {
     const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
     return (
       <main className="flex min-h-screen flex-col items-center gap-6 p-8">
+        {room.is_tutorial && (
+          <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+            🔰 これで一連の流れは以上です。お疲れさまでした!実際のクイズもこの流れで進みます。
+          </p>
+        )}
         <h1 className="text-2xl font-bold">クイズ終了!</h1>
         <p className="text-gray-600">お疲れさまでした</p>
         <ul className="w-full max-w-md space-y-2">
@@ -373,6 +384,11 @@ export default function PlayGamePage() {
   if (room.status === 'preview') {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
+        {room.is_tutorial && (
+          <p className="max-w-md rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+            🔰 「予告画面」です。次の問題が何点かだけ先に分かります。もうすぐ問題文が表示されます。
+          </p>
+        )}
         <h1 className="text-2xl font-bold">次の問題は…</h1>
         <p className="text-7xl font-bold text-indigo-600">{currentQuestion.points}点</p>
         <p className="text-gray-500">まもなく出題されます</p>
@@ -387,6 +403,11 @@ export default function PlayGamePage() {
         onClick={handleSkipReveal}
         className="flex min-h-screen flex-col items-center gap-6 p-8"
       >
+        {room.is_tutorial && (
+          <p className="max-w-xl rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+            🔰 「出題画面」です。問題文をタップすると早く選択肢を表示できます(早押し)。選択肢が出たらタップして回答してください。
+          </p>
+        )}
         <p className="text-2xl font-mono font-bold">
           残り {Math.ceil(remainingMs / 1000)}秒
         </p>
@@ -447,6 +468,11 @@ export default function PlayGamePage() {
   const myPlayer = players.find((p) => p.id === playerInfo.playerId);
   return (
     <main className="flex min-h-screen flex-col items-center gap-6 p-8">
+      {room.is_tutorial && (
+        <p className="max-w-xl rounded-lg bg-yellow-100 p-3 text-sm text-yellow-800">
+          🔰 「結果発表画面」です。正解と、あなたの正誤・現在のランキングが表示されます。もうすぐ最終結果に進みます。
+        </p>
+      )}
       <h1 className="text-2xl font-bold">結果発表</h1>
       <p className="text-xl">正解: {currentQuestion.choices[currentQuestion.correct_index]}</p>
       {selectedChoice !== null ? (
