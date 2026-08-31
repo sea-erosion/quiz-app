@@ -32,6 +32,11 @@ type Player = {
   correct_streak: number;
 };
 
+type Answer = {
+  id: string;
+  question_id: string;
+};
+
 export default function PlayGamePage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
@@ -40,6 +45,7 @@ export default function PlayGamePage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [playerInfo, setPlayerInfo] = useState<PlayerInfo | null>(null);
   const [players, setPlayers] = useState<Player[]>([]); // 全員のランキング表示用
+  const [answers, setAnswers] = useState<Answer[]>([]); // 先着◯人制限の判定用
 
   // このブラウザでの「回答済みかどうか」「選んだ選択肢」を持つローカル状態
   const [hasAnswered, setHasAnswered] = useState(false);
@@ -68,6 +74,16 @@ export default function PlayGamePage() {
     if (!room) return null;
     return questions.find((q) => q.order_index === room.current_question_index) ?? null;
   }, [room, questions]);
+
+  const ANSWER_LIMIT = 3;
+
+  // 今の問題に、先着で何人が回答済みかを数える(先着3人制限の判定に使う)
+  const answeredCountForCurrentQuestion = useMemo(() => {
+    if (!currentQuestion) return 0;
+    return answers.filter((a) => a.question_id === currentQuestion.id).length;
+  }, [answers, currentQuestion]);
+
+  const isAnswerLimitReached = answeredCountForCurrentQuestion >= ANSWER_LIMIT;
 
   // 1. localStorageから自分のplayerIdを読み出す
   useEffect(() => {
@@ -102,6 +118,13 @@ export default function PlayGamePage() {
         .select('id, nickname, score, correct_streak')
         .eq('room_id', roomId);
       if (playersData) setPlayers(playersData);
+
+      // 先着◯人制限の判定用に、これまでの回答も取得しておく
+      const { data: answersData } = await supabase
+        .from('answers')
+        .select('id, question_id')
+        .eq('room_id', roomId);
+      if (answersData) setAnswers(answersData);
     }
     fetchInitialData();
   }, [roomId]);
@@ -127,6 +150,11 @@ export default function PlayGamePage() {
           const updated = payload.new as Player;
           setPlayers((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
         }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'answers', filter: `room_id=eq.${roomId}` },
+        (payload) => setAnswers((prev) => [...prev, payload.new as Answer])
       )
       .subscribe();
     return () => {
@@ -213,11 +241,8 @@ export default function PlayGamePage() {
 
       if (cancelled) return; // 問題自体が切り替わっていたら、ここで打ち切る(早押しでの打ち切りとは区別する)
 
-      // 早押しで途中打ち切りした場合、表示済み文字数が中途半端なままなので、
-      // 選択肢を出す前に問題文を最後まで表示しきっておく
-      if (skipRevealRef.current) {
-        setRevealedCount(currentQuestion!.body.length);
-      }
+      // 早押しでタップされた場合は、その時点の中途半端な表示のまま先へ進む
+      // (最後まで表示してしまうと「押した瞬間に止まる」感じが薄れてしまうため、あえて何もしない)
 
       // 演出が終わった瞬間(または早押しでタップされた瞬間)に選択肢をフェードインさせ、同時にタイマーを開始する
       setShowChoices(true);
@@ -275,6 +300,7 @@ export default function PlayGamePage() {
 
   async function handleAnswer(choiceIndex: number) {
     if (hasAnswered || isLocked || !currentQuestion || !playerInfo || !showChoices) return;
+    if (isAnswerLimitReached) return; // 先着枠が埋まっていたら送信すらしない
 
     // 経過時間はクライアント側の計測値をそのまま送る(設計方針:クライアント時刻基準)
     const elapsedMs = timerStartMs
@@ -294,6 +320,12 @@ export default function PlayGamePage() {
 
     if (error) {
       console.error('回答の送信に失敗しました', error);
+      // ほぼ同時に3人目の回答と重なり、DB側の先着チェックで拒否された場合はここに来る。
+      // 送信前の状態(未回答)に戻し、枠が埋まっている旨を表示する。
+      if (error.message.includes('ANSWER_LIMIT_REACHED')) {
+        setHasAnswered(false);
+        setSelectedChoice(null);
+      }
     }
   }
 
@@ -371,6 +403,18 @@ export default function PlayGamePage() {
           </p>
         )}
 
+        {showChoices && !hasAnswered && !isAnswerLimitReached && (
+          <p className="font-semibold text-orange-500">
+            先着{ANSWER_LIMIT}人だけ回答できます(残り{ANSWER_LIMIT - answeredCountForCurrentQuestion}人)
+          </p>
+        )}
+
+        {showChoices && !hasAnswered && isAnswerLimitReached && (
+          <p className="font-semibold text-red-600">
+            先着{ANSWER_LIMIT}人の回答枠が埋まりました
+          </p>
+        )}
+
         <div
           className={`grid w-full max-w-xl grid-cols-2 gap-4 transition-opacity duration-500
             ${showChoices ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
@@ -382,7 +426,7 @@ export default function PlayGamePage() {
                 e.stopPropagation(); // 選択肢のクリックがmainのタップ判定(早押し)に伝わらないようにする
                 handleAnswer(i);
               }}
-              disabled={hasAnswered || isLocked || !showChoices}
+              disabled={hasAnswered || isLocked || !showChoices || isAnswerLimitReached}
               className={`rounded-lg p-6 text-lg font-semibold text-white transition
                 ${selectedChoice === i ? 'bg-indigo-800' : 'bg-indigo-500 hover:bg-indigo-600'}
                 disabled:opacity-50`}

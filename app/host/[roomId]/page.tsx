@@ -155,6 +155,35 @@ export default function HostLobbyPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.status, room?.question_started_at, currentQuestion]);
 
+  // 参加者が回答枠(先着3人、または全員がそれより少ない場合は全員分)を使い切ったら、
+  // 制限時間が残っていても3秒後に結果発表へスキップする
+  // (全員待たせる必要がなくなった分、テンポよく進行できるようにするため)
+  const ANSWER_LIMIT = 3;
+  useEffect(() => {
+    if (room?.status !== 'question' || players.length === 0) return;
+    const requiredCount = Math.min(players.length, ANSWER_LIMIT);
+    if (currentAnswers.length < requiredCount) return; // まだ枠が埋まっていない
+
+    const timeoutId = setTimeout(() => {
+      revealAnswer();
+    }, 3000);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.status, currentAnswers.length, players.length]);
+
+  // 結果発表(reveal)画面は、5秒経過したら自動的に次の問題(または最終結果)へ進む
+  useEffect(() => {
+    if (room?.status !== 'reveal') return;
+
+    const timeoutId = setTimeout(() => {
+      nextQuestionOrEnd();
+    }, 5000);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.status, room?.current_question_index]);
+
   // preview(次の問題の予告)状態になったら、一定時間後に自動でquestionへ進める
   const PREVIEW_DURATION_MS = 4000;
   useEffect(() => {
@@ -302,7 +331,9 @@ export default function HostLobbyPage() {
               </li>
             ))}
           </ul>
-          <p className="text-gray-600">回答済み: {currentAnswers.length} / {players.length}人</p>
+          <p className="text-gray-600">
+            回答済み: {currentAnswers.length} / {Math.min(players.length, ANSWER_LIMIT)}人(先着{ANSWER_LIMIT}人まで)
+          </p>
           <button
             onClick={revealAnswer}
             className="rounded-lg bg-indigo-600 px-6 py-3 text-lg font-semibold text-white hover:bg-indigo-700"

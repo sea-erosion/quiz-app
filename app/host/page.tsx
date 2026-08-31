@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { sampleQuiz } from '@/lib/sampleQuiz';
+import { quizPools } from '@/lib/quizPools';
 import { generatePin } from '@/lib/pin';
 import { shuffleArray } from '@/lib/shuffle';
 
@@ -12,20 +12,38 @@ export default function HostTopPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // 選択中の問題プール(デフォルトは最初のプール)
+  const [selectedPoolId, setSelectedPoolId] = useState(quizPools[0].id);
+  const selectedPool = quizPools.find((p) => p.id === selectedPoolId) ?? quizPools[0];
+
+  // 出題数(選んだプールの問題数を超えないように、初期値はプールの問題数と10の小さい方)
+  const [questionCount, setQuestionCount] = useState(
+    Math.min(10, quizPools[0].questions.length)
+  );
+
+  // プールを切り替えたときに、出題数がそのプールの問題数を超えていたら自動的に調整する
+  function handlePoolChange(poolId: string) {
+    setSelectedPoolId(poolId);
+    const pool = quizPools.find((p) => p.id === poolId);
+    if (pool && questionCount > pool.questions.length) {
+      setQuestionCount(pool.questions.length);
+    }
+  }
+
   async function handleCreateRoom() {
     setLoading(true);
     setErrorMessage(null);
 
     try {
-      // 1. サンプルクイズをquizzesテーブルに登録する
+      // 1. 選択したプールの情報でquizzesテーブルに登録する
       const { data: quiz, error: quizError } = await supabase
         .from('quizzes')
         .insert({
-          title: sampleQuiz.title,
-          author_name: sampleQuiz.authorName,
-          description: sampleQuiz.description,
-          shuffle: sampleQuiz.shuffle,
-          question_limit: sampleQuiz.questionLimit,
+          title: selectedPool.title,
+          author_name: selectedPool.authorName,
+          description: selectedPool.description,
+          shuffle: true,
+          question_limit: questionCount,
         })
         .select()
         .single();
@@ -34,11 +52,8 @@ export default function HostTopPage() {
         throw quizError ?? new Error('クイズの作成に失敗しました');
       }
 
-      // 2. 問題プール(20問)からランダムに question_limit(10問)だけ選んで登録する
-      const selectedQuestions = shuffleArray(sampleQuiz.questions).slice(
-        0,
-        sampleQuiz.questionLimit
-      );
+      // 2. 選択したプールから、指定した出題数だけランダムに選んで登録する
+      const selectedQuestions = shuffleArray(selectedPool.questions).slice(0, questionCount);
 
       const questionsToInsert = selectedQuestions.map((q, index) => ({
         quiz_id: quiz.id,
@@ -88,7 +103,53 @@ export default function HostTopPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
       <h1 className="text-3xl font-bold">クイズホスト画面</h1>
-      <p className="text-gray-600">サンプルクイズでルームを作成します</p>
+
+      <div className="w-full max-w-md space-y-6">
+        {/* 問題プールの選択 */}
+        <div>
+          <label className="mb-2 block font-medium text-gray-700">出題する問題ファイル</label>
+          <div className="space-y-2">
+            {quizPools.map((pool) => (
+              <label
+                key={pool.id}
+                className={`block cursor-pointer rounded-lg border p-3 transition
+                  ${selectedPoolId === pool.id ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'}`}
+              >
+                <input
+                  type="radio"
+                  name="quizPool"
+                  value={pool.id}
+                  checked={selectedPoolId === pool.id}
+                  onChange={() => handlePoolChange(pool.id)}
+                  className="mr-2"
+                />
+                <span className="font-semibold">{pool.title}</span>
+                <p className="ml-6 text-sm text-gray-500">
+                  {pool.description}(プール内:{pool.questions.length}問)
+                </p>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* 出題数の指定 */}
+        <div>
+          <label className="mb-2 block font-medium text-gray-700">
+            出題数:{questionCount}問
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={selectedPool.questions.length}
+            value={questionCount}
+            onChange={(e) => setQuestionCount(Number(e.target.value))}
+            className="w-full"
+          />
+          <p className="text-sm text-gray-500">
+            このプール(全{selectedPool.questions.length}問)からランダムに{questionCount}問を出題します
+          </p>
+        </div>
+      </div>
 
       <button
         onClick={handleCreateRoom}
