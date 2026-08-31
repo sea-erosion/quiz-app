@@ -118,7 +118,7 @@ export const quizPools: QuizPool[] = [
       {
         body: '自らが大切に世話をしたり育てたりすることを、ある調味料の名前を使って「何に掛ける」というでしょう？',
         choices: ['手塩', '天塩', 'みりん', '天つゆ'],
-        correctIndex: 1,
+        correctIndex: 0,
         timeLimitSec: 25,
         points: 1200,
       },
@@ -152,8 +152,8 @@ export const quizPools: QuizPool[] = [
       },
       {
         body: '一般に、「ピンキーリング」はどの指にはめる指輪でしょう？',
-        choices: ['親指', '人差し指', '中指', '薬指'],
-        correctIndex: 3,
+        choices: ['親指', '人差し指', '小指', '薬指'],
+        correctIndex: 2,
         timeLimitSec: 15,
         points: 800,
       },
