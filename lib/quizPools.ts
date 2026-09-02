@@ -517,7 +517,7 @@ export const quizPools: QuizPool[] = [
       {
         body: '今年のMAJに出演していなかったアーティストは？',
         choices: ['YOASOBI', 'M!LK', '米津玄師', 'HANA'],
-        correctIndex: 1,
+        correctIndex: 0,
         timeLimitSec: 15,
         points: 700,
       },
