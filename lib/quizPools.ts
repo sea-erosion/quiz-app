@@ -8,7 +8,7 @@ export type QuizPool = {
   title: string;
   authorName: string;
   description: string;
-  isTutorial？: boolean; // trueの場合、ホスト側で出題数選択を1問固定にし、各画面に説明を表示する
+  isTutorial?: boolean; // trueの場合、ホスト側で出題数選択を1問固定にし、各画面に説明を表示する
   questions: {
     body: string;
     choices: string[];
